@@ -1,4 +1,4 @@
-Run `swift test --package-path tests/AudioEffects --scratch-path /tmp/vplay-audio-effects-tests` using the same Xcode toolchain as the app.
+Run `swift test --package-path tests/AudioEffects --scratch-path /tmp/macvideoplayer-audio-effects-tests` using the same Xcode toolchain as the app.
 
 The Swift Testing suite runs the production enhancer and Apple Accelerate processor against bundled FFmpeg libraries. It checks surround methods with mono, stereo, 5.1, and 7.1 inputs; matrix layouts from mono through 7.1; presets; Core Audio speaker order; DVD WG4 channel reordering; and every video AI reset control.
 

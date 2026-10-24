@@ -1,11 +1,11 @@
 #import "CEffects.h"
-#import "../../../../vplay/Effects/VPAIEnhancer.m"
-#import "../../../../vplay/Audio/VPAudioDeviceManager.m"
+#import "../../../../macvideoplayer/Effects/VPAIEnhancer.m"
+#import "../../../../macvideoplayer/Audio/VPAudioDeviceManager.m"
 #import "VPFFmpeg.h"
 #import <AudioToolbox/AudioToolbox.h>
-#import "../../../../vplay/Audio/VPAppleSurroundProcessor.m"
+#import "../../../../macvideoplayer/Audio/VPAppleSurroundProcessor.m"
 #import "VPSurroundRouting.h"
-#import "../../../../vplay/Utilities/VPFFmpegLibrary.m"
+#import "../../../../macvideoplayer/Utilities/VPFFmpegLibrary.m"
 
 // Capture the real layout helper's Core Audio property without opening hardware.
 static AudioChannelLabel labels[32];

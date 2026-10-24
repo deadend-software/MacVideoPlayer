@@ -9,7 +9,7 @@ let W = 2880, H = 1800
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let outDir = root.appendingPathComponent("AppStoreScreenshots")
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-let splash = NSImage(contentsOf: root.appendingPathComponent("vplay/vplay-splash.png"))
+let splash = NSImage(contentsOf: root.appendingPathComponent("macvideoplayer/macvideoplayer-splash.png"))
 
 let cyan = NSColor(calibratedRed: 0.35, green: 0.87, blue: 1.0, alpha: 1)
 let white = NSColor.white
@@ -243,7 +243,7 @@ func clip(_ r: NSRect, _ body: () -> Void) {
 
 func shot1() {
     background(headline: "Plays Almost Anything", sub: "Native macOS playback plus FFmpeg for MKV, AVI, DVD and Blu-ray")
-    let (c, v) = playerWindow(winRect, title: "vplay — Sunset Ridge.mp4")
+    let (c, v) = playerWindow(winRect, title: "macvideoplayer — Sunset Ridge.mp4")
     clip(c) {
         scene(v)
         infoCard(c, lines: ["Sunset Ridge", "3:20  ·  MP4  ·  8.0 Mbps", "H.264 1920×1080  ·  AAC stereo"])
@@ -254,7 +254,7 @@ func shot1() {
 
 func shot2() {
     background(headline: "Every Feature, One Panel", sub: "Files, discs, playlists, tracks, AirPlay and more, one Tab away")
-    let (c, _) = playerWindow(winRect, title: "vplay")
+    let (c, _) = playerWindow(winRect, title: "macvideoplayer")
     clip(c) {
         if let s = splash { s.draw(in: rect(c.minX + 560, c.minY + 20, c.width - 560, (c.width - 560) * 9 / 16 + 120), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
         let p = rect(c.minX + 36, c.minY + 36, 800, c.height - 72)
@@ -285,7 +285,7 @@ func shot2() {
 }
 
 func aiVideoMenu() {
-    let (c, v) = playerWindow(winRect, title: "vplay — Sunset Ridge.mp4")
+    let (c, v) = playerWindow(winRect, title: "macvideoplayer — Sunset Ridge.mp4")
     clip(c) {
         scene(v, grade: 1.4)
         cornerButtons(c, sidebar: false)
@@ -317,7 +317,7 @@ func shot3() {
 
 func shot4() {
     background(headline: "Hi-Res Audio & Surround Upmix", sub: "Upsample to 384 kHz, 5.1 / 7.1 upmix, dialogue boost and night mode")
-    let (c, v) = playerWindow(winRect, title: "vplay — Midnight Circuit.m4a")
+    let (c, v) = playerWindow(winRect, title: "macvideoplayer — Midnight Circuit.m4a")
     clip(c) {
         scene(v, look: .aurora)
         // Spectrum bars like the built-in visualizer
@@ -362,7 +362,7 @@ func slider(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ label: String, _ v: CGFl
 func shot5() {
     background(headline: "Shape the Picture", sub: "Post-processing sliders, filter chains and your own Core Image shaders")
     let pw = rect(300, 320, 1750, 1400)
-    let (c, v) = playerWindow(pw, title: "vplay — Sunset Ridge.mp4")
+    let (c, v) = playerWindow(pw, title: "macvideoplayer — Sunset Ridge.mp4")
     clip(c) {
         scene(v, grade: 1.5)
         cornerButtons(c, sidebar: false)

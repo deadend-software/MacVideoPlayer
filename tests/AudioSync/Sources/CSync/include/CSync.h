@@ -1,2 +1,2 @@
-#include "../../../../../vplay/Player/VPAudioSync.h"
-#include "../../../../../vplay/Player/VPDVDNavigation.h"
+#include "../../../../../macvideoplayer/Player/VPAudioSync.h"
+#include "../../../../../macvideoplayer/Player/VPDVDNavigation.h"

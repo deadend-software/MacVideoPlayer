@@ -1,4 +1,4 @@
-// Generates vplay's app icon (AppIcon.icns) and splash artwork (vplay-splash.png).
+// Generates macvideoplayer's app icon (AppIcon.icns) and splash artwork (macvideoplayer-splash.png).
 // Usage: swift tools/make_assets.swift   (run from the repository root)
 import AppKit
 import CoreGraphics
@@ -185,13 +185,13 @@ func makeSplash(path: String) {
 // MARK: - Run
 
 let fm = FileManager.default
-let out = "vplay"
-let work = NSTemporaryDirectory() + "vplay-icon-work"
+let out = "macvideoplayer"
+let work = NSTemporaryDirectory() + "macvideoplayer-icon-work"
 try? fm.removeItem(atPath: work)
 try! fm.createDirectory(atPath: work + "/AppIcon.iconset", withIntermediateDirectories: true)
 let master = work + "/master.png"
 makeIcon(path: master)
-makeSplash(path: out + "/vplay-splash.png")
+makeSplash(path: out + "/macvideoplayer-splash.png")
 
 let sizes: [(Int, String)] = [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"), (128, "128x128"), (256, "128x128@2x"),
                               (256, "256x256"), (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")]
@@ -205,4 +205,4 @@ let it = Process(); it.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 it.arguments = ["-c", "icns", work + "/AppIcon.iconset", "-o", out + "/AppIcon.icns"]
 try! it.run(); it.waitUntilExit()
 try? fm.copyItem(atPath: master, toPath: "tools/icon-1024.png")
-print("Wrote \(out)/AppIcon.icns and \(out)/vplay-splash.png")
+print("Wrote \(out)/AppIcon.icns and \(out)/macvideoplayer-splash.png")

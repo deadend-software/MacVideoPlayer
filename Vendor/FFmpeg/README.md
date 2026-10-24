@@ -2,7 +2,7 @@
 
 `lib/` contains universal Apple Silicon/Intel macOS dylibs. `include/` contains
 the matching public headers. Xcode links these libraries and embeds/signs them
-inside `vplay.app/Contents/Frameworks`; no Homebrew installation is needed.
+inside `macvideoplayer.app/Contents/Frameworks`; no Homebrew installation is needed.
 
 `Legal/` is copied into the app's resources. It includes the LGPL license,
 notices, corresponding source archive, and the build script. To rebuild:

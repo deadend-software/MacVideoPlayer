@@ -8,8 +8,8 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(name: "CEffects", cSettings: [.unsafeFlags([
-            "-fobjc-arc", "-I\(root)/Vendor/FFmpeg/include", "-I\(root)/vplay/Audio",
-            "-I\(root)/vplay/Effects", "-I\(root)/vplay/Utilities"
+            "-fobjc-arc", "-I\(root)/Vendor/FFmpeg/include", "-I\(root)/macvideoplayer/Audio",
+            "-I\(root)/macvideoplayer/Effects", "-I\(root)/macvideoplayer/Utilities"
         ])], linkerSettings: [
             .linkedFramework("Foundation"), .linkedFramework("CoreImage"),
             .linkedFramework("CoreAudio"), .linkedFramework("AudioToolbox"),

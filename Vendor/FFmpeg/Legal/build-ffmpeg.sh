@@ -5,7 +5,7 @@ legal_dir="$(cd "$(dirname "$0")" && pwd)"
 output_dir="${1:?Usage: build-ffmpeg.sh OUTPUT_DIRECTORY}"
 mkdir -p "$output_dir"
 output_dir="$(cd "$output_dir" && pwd)"
-build_root="$(mktemp -d "${TMPDIR:-/tmp}/vplay-ffmpeg-build.XXXXXX")"
+build_root="$(mktemp -d "${TMPDIR:-/tmp}/macvideoplayer-ffmpeg-build.XXXXXX")"
 trap 'rm -rf "$build_root"' EXIT
 archive="$legal_dir/ffmpeg-9.0.2.tar.xz"
 expected_sha=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
