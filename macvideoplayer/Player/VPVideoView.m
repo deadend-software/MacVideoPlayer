@@ -120,7 +120,9 @@ static NSImage *Symbol(NSString *name, NSString *description) {
         [self addSubview:_subtitleLabel positioned:NSWindowAbove relativeTo:nil];
 
         _subtitleImageView = [[NSImageView alloc] initWithFrame:NSZeroRect];
-        _subtitleImageView.imageScaling = NSImageScaleProportionallyUpOrDown;
+        // The subtitle canvas is the subtitle track's frame; it maps onto the whole picture, so it is not kept
+        // in proportion (a 720x480 DVD frame shown on a 710x540 picture would be letterboxed and sit too high).
+        _subtitleImageView.imageScaling = NSImageScaleAxesIndependently;
         _subtitleImageView.hidden = YES;
         _subtitleImageView.wantsLayer = YES;
         _subtitleImageView.layer.zPosition = 205;
@@ -754,6 +756,24 @@ static NSImage *Symbol(NSString *name, NSString *description) {
     [self updateSubtitleForTime:[self currentMediaTime]];
 }
 
+/// The chosen family in a semibold weight (the look the system font had), or the system font when none is chosen or
+/// the family is not installed.
+- (NSFont *)subtitleFontOfSize:(CGFloat)size {
+    if (self.subtitleFontName.length) {
+        NSFont *font = [NSFontManager.sharedFontManager fontWithFamily:self.subtitleFontName traits:0 weight:8 size:size];
+        if (!font) font = [NSFont fontWithName:self.subtitleFontName size:size];
+        if (font) return font;
+    }
+    return [NSFont systemFontOfSize:size weight:NSFontWeightSemibold];
+}
+
+- (void)setSubtitleFontName:(NSString *)name {
+    _subtitleFontName = [name copy];
+    // The label skips redrawing when the text is unchanged, so clear it to show the cue in the new font at once.
+    self.subtitleLabel.stringValue = @"";
+    [self updateSubtitleForTime:[self currentMediaTime]];
+}
+
 - (void)updateSubtitleForTime:(double)seconds {
     NSString *text = self.liveSubtitleText.length ? self.liveSubtitleText : [self.subtitleTrack textAtTime:seconds];
     if (!text.length) {
@@ -771,7 +791,7 @@ static NSImage *Symbol(NSString *name, NSString *description) {
     // (clipped by masksToBounds) shows up as black smudges around the glyphs.
     CGFloat size = MAX(18, MIN(36, self.bounds.size.height / 24));
     self.subtitleLabel.attributedStringValue = [[NSAttributedString alloc] initWithString:text attributes:@{
-        NSFontAttributeName:[NSFont systemFontOfSize:size weight:NSFontWeightSemibold],
+        NSFontAttributeName:[self subtitleFontOfSize:size],
         NSForegroundColorAttributeName:NSColor.whiteColor,
         NSStrokeColorAttributeName:NSColor.blackColor,
         NSStrokeWidthAttributeName:@-2.5,

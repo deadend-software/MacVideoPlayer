@@ -52,6 +52,16 @@ extern NSNotificationName const VPAIEnhancerDidChangeNotification;
 @property (atomic) double localContrast;        // 0.0 ... 1.0 large-scale "clarity": depth and shape of objects
 @property (atomic) double flatSmoothing;        // 0.0 ... 1.0 evens out flat colour areas and compression noise
 
+/// Anime mode: extra stages tuned for animation, on top of whatever else is set. It cleans colour fringing along lines
+/// and compression noise in flat cels, deepens and firms up the ink lines, and lifts cel colour. It raises the
+/// matching sliders to at least anime levels (by `animeStrength`) and never lowers one the user set higher.
+@property (atomic) BOOL animeMode;
+@property (atomic) double animeStrength;   // 0.0 ... 1.0 (0.7 by default)
+
+/// What the picture shows while AI video is on, so the effect can be judged: 0 the enhanced picture, 1 the original
+/// (settings kept), 2 a split with the original on the left half and the enhanced picture on the right.
+@property (atomic) NSInteger comparisonMode;
+
 @property (atomic, readonly) BOOL isVideoAIActive;
 @property (atomic, readonly) NSUInteger revision;
 

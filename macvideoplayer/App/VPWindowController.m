@@ -28,6 +28,7 @@
 #import "VPEffectRenderer.h"
 #import "VPPostProcessing.h"
 #import "VPPostProcessingWindowController.h"
+#import "VPAIVideoWindowController.h"
 #import "VPShaderEditorWindowController.h"
 #import "VPPlaylistWindowController.h"
 #import "VPAIEnhancer.h"
@@ -59,7 +60,7 @@ static BOOL LooksLikeAudio(NSURL *url) {
     return [audio containsObject:url.pathExtension.lowercaseString];
 }
 
-@interface VPWindowController () <NSWindowDelegate, VPPlaybackEngineDelegate, VPHUDOverlayDelegate, NSMenuItemValidation, NSMenuDelegate, VPBluRayNavigatorDelegate, VPBluRayMenuViewDelegate>
+@interface VPWindowController () <NSWindowDelegate, VPPlaybackEngineDelegate, VPHUDOverlayDelegate, NSMenuItemValidation, NSMenuDelegate, NSFontChanging, VPBluRayNavigatorDelegate, VPBluRayMenuViewDelegate>
 @property (nonatomic, strong) VPConfigurationBuilder *builder;
 @property (nonatomic, strong) VPPreparedMedia *preparedMedia;
 @property (nonatomic, strong) VPMediaProbe *probe;
@@ -114,6 +115,7 @@ static BOOL LooksLikeAudio(NSURL *url) {
 @property (nonatomic, strong) VPAudioAnalyzer *analyzer;
 @property (nonatomic, strong) VPPlaylistWindowController *playlistController;
 @property (nonatomic, strong) VPPostProcessingWindowController *postController;
+@property (nonatomic, strong) VPAIVideoWindowController *aiVideoController;
 @property (nonatomic, strong) VPShaderEditorWindowController *shaderController;
 @property (nonatomic, strong) id localEventMonitor;
 @property (nonatomic, strong) NSTimer *preferenceTimer;
@@ -271,6 +273,8 @@ static BOOL LooksLikeAudio(NSURL *url) {
     NSString *repeat = options[@"repeat"];
     self.playlist.repeatMode = [repeat isEqual:@"all"] ? VPRepeatAll : ([repeat isEqual:@"one"] ? VPRepeatOne : VPRepeatOff);
     if ([options[@"postProcessing"] isKindOfClass:NSDictionary.class]) [VPPostProcessing.shared applyDictionary:options[@"postProcessing"]];
+    NSString *subtitleFont = options[@"subtitleFont"];
+    self.videoView.subtitleFontName = [subtitleFont isKindOfClass:NSString.class] && subtitleFont.length ? subtitleFont : nil;
     [self syncToggleStates];
 }
 
@@ -1249,6 +1253,8 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
         [menu addItem:NSMenuItem.separatorItem];
         NSMenuItem *loadItem = [menu addItemWithTitle:@"Load Subtitle File…" action:@selector(loadSubtitleFile:) keyEquivalent:@""];
         loadItem.target = self;
+        [menu addItem:NSMenuItem.separatorItem];
+        [self populateSubtitleFontMenu:[self submenuNamed:@"Subtitle Font" in:menu]];
         return;
     }
     NSArray<VPTrack *> *tracks = kind == VPTrackKindAudio ? probe.audioTracks : probe.videoTracks;
@@ -1265,6 +1271,43 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
         item.target = self;
         item.state = selected == track.index ? NSControlStateValueOn : NSControlStateValueOff;
     }
+}
+
+/// Fonts offered first: common, readable families, shown only when installed.
+static NSArray<NSString *> *CommonSubtitleFonts(void) {
+    return @[@"Helvetica Neue", @"Arial", @"Avenir Next", @"Verdana", @"Trebuchet MS", @"Tahoma", @"Georgia", @"Times New Roman", @"Palatino",
+             @"Gill Sans", @"Futura", @"Optima", @"Menlo", @"Courier New", @"American Typewriter", @"Comic Sans MS", @"Impact"];
+}
+
+/// A menu item whose title is drawn in the font it selects, so the choice can be judged before it is made.
+- (NSMenuItem *)subtitleFontItemIn:(NSMenu *)menu family:(NSString *)family title:(NSString *)title selected:(BOOL)selected {
+    NSMenuItem *item = [self addTo:menu title:title action:@selector(setSubtitleFontFromMenu:) object:family checked:selected];
+    NSFont *preview = family ? [NSFontManager.sharedFontManager fontWithFamily:family traits:0 weight:5 size:[NSFont menuFontOfSize:0].pointSize + 1] : nil;
+    if (preview) item.attributedTitle = [[NSAttributedString alloc] initWithString:title attributes:@{NSFontAttributeName: preview}];
+    return item;
+}
+
+- (void)populateSubtitleFontMenu:(NSMenu *)menu {
+    NSString *current = self.videoView.subtitleFontName;
+    NSFontManager *fonts = NSFontManager.sharedFontManager;
+    NSSet<NSString *> *installed = [NSSet setWithArray:fonts.availableFontFamilies];
+    [self subtitleFontItemIn:menu family:nil title:@"System Default" selected:!current.length];
+    [menu addItem:NSMenuItem.separatorItem];
+    BOOL shownCurrent = NO;
+    for (NSString *family in CommonSubtitleFonts()) {
+        if (![installed containsObject:family]) continue;
+        BOOL selected = [family isEqual:current];
+        shownCurrent |= selected;
+        [self subtitleFontItemIn:menu family:family title:family selected:selected];
+    }
+    // A font chosen from the full list or the font panel stays visible and ticked here.
+    if (current.length && !shownCurrent && [installed containsObject:current]) [self subtitleFontItemIn:menu family:current title:current selected:YES];
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenu *all = [self submenuNamed:@"All Fonts" in:menu];
+    for (NSString *family in [fonts.availableFontFamilies sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)]) {
+        [self subtitleFontItemIn:all family:family title:family selected:[family isEqual:current]];
+    }
+    [self addTo:menu title:@"Font Panel…" action:@selector(chooseSubtitleFont:) object:nil checked:NO];
 }
 
 /// Disc audio and subtitle streams come straight from the disc engine, so no media probe is involved.
@@ -1491,6 +1534,16 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
     [self.postController showWindow:nil];
 }
 
+- (IBAction)showAIVideo:(id)sender {
+    if (!self.aiVideoController) {
+        self.aiVideoController = [VPAIVideoWindowController new];
+        __weak typeof(self) weakSelf = self;
+        self.aiVideoController.pictureNeedsRefresh = ^{ [weakSelf refreshEffectsForcingRedraw:YES]; };
+    }
+    [self.aiVideoController refresh];
+    [self.aiVideoController showWindow:nil];
+}
+
 - (IBAction)showShaderEditor:(id)sender {
     if (!self.shaderController) {
         self.shaderController = [VPShaderEditorWindowController new];
@@ -1598,6 +1651,9 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
     // AI video
     NSMenu *aiVideo = [self submenuNamed:@"AI Video Enhancement" in:menu];
     NSString *activeVideo = ai.isVideoAIActive ? ai.activeVideoPreset : @"none";
+    [self addTo:aiVideo title:@"Settings & Compare…" action:@selector(showAIVideo:) object:nil checked:NO];
+    [self addTo:aiVideo title:@"Anime Mode" action:@selector(toggleAnimeMode:) object:nil checked:ai.videoAIEnabled && ai.animeMode];
+    [aiVideo addItem:NSMenuItem.separatorItem];
     [self addTo:aiVideo title:@"Off" action:@selector(selectAIVideoPreset:) object:@"none" checked:!ai.isVideoAIActive];
     [aiVideo addItem:NSMenuItem.separatorItem];
     NSArray *videoPresets = @[@[@"Adaptive AI (Analyze This File)", @"adaptive"], @[@"Vivid & Crisp", @"vivid_crisp"], @[@"Cinema HDR", @"cinema_hdr"], @[@"Anime Pop", @"anime_pop"], @[@"Super Resolution 2×", @"super_resolution_2x"], @[@"Clean Restore (Denoise)", @"clean_restore"]];
@@ -1729,6 +1785,14 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
     [ai setValue:on ? @0 : spec[2] forKey:spec[1]];
     if (!on) ai.videoAIEnabled = YES;
     [self aiVideoDidChangeWithMessage:[NSString stringWithFormat:@"AI %@: %@", spec[0], on ? @"Off" : @"On"]];
+}
+
+- (IBAction)toggleAnimeMode:(NSMenuItem *)sender {
+    VPAIEnhancer *ai = VPAIEnhancer.shared;
+    BOOL on = !(ai.videoAIEnabled && ai.animeMode);
+    ai.animeMode = on;
+    if (on) ai.videoAIEnabled = YES;
+    [self aiVideoDidChangeWithMessage:[NSString stringWithFormat:@"Anime Mode: %@", on ? @"On" : @"Off"]];
 }
 
 - (IBAction)toggleAIVideoFlag:(NSMenuItem *)sender {
@@ -2175,16 +2239,30 @@ static NSString * const kVPKeepEnhancementOptionsKey = @"VPKeepEnhancementOption
     }];
 }
 
+/// Uses a font family for text subtitles (nil for the system font) and remembers it for the next launch.
+- (void)applySubtitleFontFamily:(nullable NSString *)family {
+    self.videoView.subtitleFontName = family;
+    [self savePreference:@"subtitleFont" value:family ?: @""];
+    [self.videoView showOSDText:[NSString stringWithFormat:@"Subtitle Font: %@", family ?: @"System Default"] symbol:@"textformat" level:-1];
+}
+
 - (IBAction)chooseSubtitleFont:(id)sender {
     NSFontManager *fm = [NSFontManager sharedFontManager];
+    NSFont *current = [self.videoView subtitleFontOfSize:24];
+    fm.target = self;
+    [fm setSelectedFont:current isMultiple:NO];
     [fm orderFrontFontPanel:sender];
 }
 
+/// Sent by the font panel as a font is picked in it.
+- (void)changeFont:(id)sender {
+    NSFont *picked = [sender convertFont:[self.videoView subtitleFontOfSize:24]];
+    if (picked.familyName.length && ![picked.familyName isEqual:self.videoView.subtitleFontName]) [self applySubtitleFontFamily:picked.familyName];
+}
+
 - (IBAction)setSubtitleFontFromMenu:(NSMenuItem *)sender {
-    if (sender.title.length) {
-        self.activeOptions[@"subtitleFont"] = sender.title;
-        [self.videoView setStatusText:[NSString stringWithFormat:@"Subtitle Font: %@", sender.title]];
-    }
+    NSString *family = [sender.representedObject isKindOfClass:NSString.class] ? sender.representedObject : nil;
+    [self applySubtitleFontFamily:family];
 }
 
 - (IBAction)setSubtitleStyleFromMenu:(NSMenuItem *)sender {

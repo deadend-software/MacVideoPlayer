@@ -1270,7 +1270,14 @@ static int StreamIndexForOrdinal(AVFormatContext *format, enum AVMediaType type,
     _audioWriteHeadPTS = -1.0;
     _audioBasePTS = self.currentTime;
     os_unfair_lock_unlock(&_audioLock);
-    
+
+    // The demuxer has read ahead of the playback position. Re-seek to the current time so the
+    // new audio stream (and subtitles) are re-read from there and every stream resyncs.
+    _seekRequested = YES;
+    _seekExact = NO;
+    _seekTargetPTS = self.currentTime;
+    _seeking = YES;
+
     [_demuxCond broadcast];
     [_demuxCond unlock];
     return YES;
@@ -1346,6 +1353,15 @@ static int StreamIndexForOrdinal(AVFormatContext *format, enum AVMediaType type,
             _subtitleCodecCtx = NULL;
         }
         _subtitleStreamIndex = -1;
+    }
+    if (streamIndex >= 0) {
+        // Re-read from the current position so the cue on screen now (and image subtitles,
+        // which are only emitted once) are picked up by the new decoder in sync.
+        _seekRequested = YES;
+        _seekExact = NO;
+        _seekTargetPTS = self.currentTime;
+        _seeking = YES;
+        [_demuxCond broadcast];
     }
     [_demuxCond unlock];
     return YES;
@@ -1643,7 +1659,10 @@ static int StreamIndexForOrdinal(AVFormatContext *format, enum AVMediaType type,
     if (self.hasVideo && _videoCodecCtx) {
         __block BOOL gotFrame = NO;
         double slack = _activeSeekExact ? 0.5 / MAX(1.0, self.videoFPS) : 0.04;
-        int maxPackets = 400;
+        // Decoding runs from the keyframe before the target, and anime or screen recordings can go 10 s or more
+        // without one (hundreds of packets across all streams). Stopping early would show a frame well before the
+        // target and resume playback from there, so the limit only guards against a stream that never reaches it.
+        int maxPackets = 8000;
         for (int i = 0; i < maxPackets && !gotFrame; i++) {
             [_demuxCond lock];
             if (_seekRequested) {
@@ -1661,7 +1680,12 @@ static int StreamIndexForOrdinal(AVFormatContext *format, enum AVMediaType type,
                         double normPTS = target;
                         if (rawTS != AV_NOPTS_VALUE) {
                             double rawSec = rawTS * av_q2d(_videoTimeBase);
-                            if (_lastRawVideoPTS < 0 && fabs((rawSec + _videoPTSOffset) - target) > 2.0) {
+                            // A seek lands on the keyframe before the target, which with a long GOP is easily more than
+                            // 2 s earlier. That is not a timestamp reset: rebasing on it would shift every clock,
+                            // subtitle and the seek bar by the distance back to the keyframe. Only a first frame
+                            // well after the target (or any mismatch on a disc, where timestamps restart) is a reset.
+                            double firstFrameOffsetFromTarget = (rawSec + _videoPTSOffset) - target;
+                            if (_lastRawVideoPTS < 0 && (firstFrameOffsetFromTarget > 2.0 || (_isDiscMedia && fabs(firstFrameOffsetFromTarget) > 2.0))) {
                                 _videoPTSOffset = target - rawSec;
                                 _audioPTSOffset = _videoPTSOffset;
                             }
@@ -1753,11 +1777,16 @@ static int StreamIndexForOrdinal(AVFormatContext *format, enum AVMediaType type,
     _seeking = NO;
     [_demuxCond unlock];
     
+    // Start only with at least two full buffers queued (as at the start of playback), or at the end of the file; the
+    // demux thread starts the queue as soon as the ring reaches that, instead of playing a sliver padded with silence.
+    size_t seekStartSamples = (AUDIO_BUFFER_SIZE / sizeof(float)) * 2;
     if (_audioQueue && _audioRingAvailable > 0 &&
+        (_isDiscMedia || _eofReached || _audioRingAvailable >= seekStartSamples) &&
         (!_isDiscMedia || _audioRingAvailable >= (size_t)(_audioFormat.mSampleRate * _audioFormat.mChannelsPerFrame * 0.65)) &&
         (!_isNetworkSource || _audioRingAvailable >= (size_t)(_audioFormat.mSampleRate * _audioFormat.mChannelsPerFrame * kNetworkPrerollSeconds))) {
         for (int i = 0; i < AUDIO_BUFFER_COUNT; i++) {
-            if ((_isDiscMedia || _audioBuffers[i]->mAudioDataByteSize == 0) && _audioRingAvailable > 0) {
+            BOOL fillsBuffer = _isDiscMedia || _eofReached || _audioRingAvailable >= _audioBuffers[i]->mAudioDataBytesCapacity / sizeof(float);
+            if ((_isDiscMedia || _audioBuffers[i]->mAudioDataByteSize == 0) && _audioRingAvailable > 0 && fillsBuffer) {
                 [self fillAudioBuffer:_audioBuffers[i]];
             }
         }
@@ -2721,8 +2750,9 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
     size_t availAfterWrite = _audioRingAvailable;
     os_unfair_lock_unlock(&_audioLock);
     
-    // Prime AudioQueue once enough samples are buffered so startup does not immediately underrun
-    if (_audioQueue) {
+    // Prime AudioQueue once enough samples are buffered so startup does not immediately underrun. A seek in progress
+    // primes and starts the queue itself when it finishes; doing it here would run the queue with nothing queued.
+    if (_audioQueue && !_seeking) {
         size_t minStartupSamples = _isDiscMedia
             ? (size_t)(sampleRate * channels * 0.65)
             : (size_t)((AUDIO_BUFFER_SIZE / sizeof(float)) * 2);
@@ -2730,7 +2760,10 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
         if (_isNetworkSource) minStartupSamples = MAX(minStartupSamples, (size_t)(sampleRate * channels * kNetworkPrerollSeconds));
         if ((!_isDiscMedia && _audioQueueStarted) || availAfterWrite >= minStartupSamples || _eofReached) {
             for (int i = 0; i < AUDIO_BUFFER_COUNT; i++) {
-                if ((_isDiscMedia || _audioBuffers[i]->mAudioDataByteSize == 0) && _audioRingAvailable > 0) {
+                // Decoded audio arrives a frame (about 30 ms) at a time. A buffer filled from a nearly empty ring
+                // is padded with silence, which plays as chopped sound, so wait until it can be filled completely.
+                BOOL fillsBuffer = _isDiscMedia || _eofReached || _audioRingAvailable >= _audioBuffers[i]->mAudioDataBytesCapacity / sizeof(float);
+                if ((_isDiscMedia || _audioBuffers[i]->mAudioDataByteSize == 0) && _audioRingAvailable > 0 && fillsBuffer) {
                     [self fillAudioBuffer:_audioBuffers[i]];
                 }
             }
@@ -2767,8 +2800,11 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
 
     AVSubtitleRect *firstRect = sub.rects[0];
     if (firstRect->type == SUBTITLE_BITMAP) {
-        int canvasW = (_videoCodecCtx && _videoCodecCtx->width > 0) ? _videoCodecCtx->width : 720;
-        int canvasH = (_videoCodecCtx && _videoCodecCtx->height > 0) ? _videoCodecCtx->height : 480;
+        // Bitmap positions are in the subtitle track's own frame (a DVD's 720x480, for instance), which is not the
+        // size of the video when that was cropped or rescaled. The view stretches this canvas over the picture, so
+        // a canvas of the video's size would put the text too high or too low.
+        int canvasW = _subtitleCodecCtx->width > 0 ? _subtitleCodecCtx->width : ((_videoCodecCtx && _videoCodecCtx->width > 0) ? _videoCodecCtx->width : 720);
+        int canvasH = _subtitleCodecCtx->height > 0 ? _subtitleCodecCtx->height : ((_videoCodecCtx && _videoCodecCtx->height > 0) ? _videoCodecCtx->height : 480);
         for (unsigned rIdx = 0; rIdx < sub.num_rects; rIdx++) {
             AVSubtitleRect *r = sub.rects[rIdx];
             if (r->x + r->w > canvasW) canvasW = r->x + r->w;
@@ -2810,6 +2846,20 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
                         needsFallbackPalette = YES;
                     }
                 }
+                // The disc's palette colours the text (green, yellow...). Subtitles are drawn white with a dark
+                // outline: the brighter half of the palette is the letter, the darker half its outline.
+                double minLuma = 255, maxLuma = 0;
+                if (pal) {
+                    for (int c = 0; c < MIN(r->nb_colors, 256); c++) {
+                        uint32_t argb = pal[c];
+                        if (((argb >> 24) & 0xFF) == 0) continue;
+                        double luma = 0.299 * ((argb >> 16) & 0xFF) + 0.587 * ((argb >> 8) & 0xFF) + 0.114 * (argb & 0xFF);
+                        minLuma = MIN(minLuma, luma);
+                        maxLuma = MAX(maxLuma, luma);
+                    }
+                }
+                double midLuma = (minLuma + maxLuma) / 2.0;
+                BOOL singleTone = maxLuma - minLuma < 24;
                 int rx = MAX(0, r->x);
                 int ry = MAX(0, r->y);
                 int rw = MIN(r->w, canvasW - rx);
@@ -2840,6 +2890,10 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
                                     red = 0; green = 0; blue = 0;
                                 }
                             }
+                        } else {
+                            double luma = 0.299 * red + 0.587 * green + 0.114 * blue;
+                            uint8_t tone = (singleTone || luma >= midLuma) ? 255 : 0;
+                            red = green = blue = tone;
                         }
                         dstRow[x * 4 + 0] = red;
                         dstRow[x * 4 + 1] = green;
@@ -2869,9 +2923,13 @@ static OSStatus VPHiFiInputProc(AudioConverterRef converter, UInt32 *ioPackets, 
                 }
             }
             if (raw.length) {
+                // Vector drawings ({\p1}m 0 0 l ...): shapes and effects, never text. Drop the whole block with
+                // its path commands, not just the braces, or the commands would show up as words.
+                NSRegularExpression *drawing = [NSRegularExpression regularExpressionWithPattern:@"\\{[^}]*\\\\p[1-9][^}]*\\}[^{]*" options:0 error:nil];
+                raw = [drawing stringByReplacingMatchesInString:raw options:0 range:NSMakeRange(0, raw.length) withTemplate:@""];
                 raw = [raw stringByReplacingOccurrencesOfString:@"\\N" withString:@"\n"];
                 raw = [raw stringByReplacingOccurrencesOfString:@"\\n" withString:@"\n"];
-                NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\\{[^\\}]*\\}" options:0 error:nil];
+                NSRegularExpression *re =[NSRegularExpression regularExpressionWithPattern:@"\\{[^\\}]*\\}" options:0 error:nil];
                 raw = [re stringByReplacingMatchesInString:raw options:0 range:NSMakeRange(0, raw.length) withTemplate:@""];
                 raw = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
                 if (raw.length) [lines addObject:raw];

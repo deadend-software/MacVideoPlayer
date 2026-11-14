@@ -52,6 +52,8 @@ NSNotificationName const VPAIEnhancerDidChangeNotification = @"VPAIEnhancerDidCh
         _hueGains = @[];
         _adaptiveVideoEnabled = NO;
         _adaptiveAudioEnabled = NO;
+        _animeMode = NO;
+        _animeStrength = 0.7;
         
         _audioAIEnabled = YES;
         _activeAudioPreset = @"none";
@@ -97,7 +99,7 @@ NSNotificationName const VPAIEnhancerDidChangeNotification = @"VPAIEnhancerDidCh
             fabs(self.saturationTrim) > 0.01 ||
             fabs(self.temperatureShift) > 0.01 ||
             self.colorPop > 0.01 || self.contrastCurve > 0.01 || self.lineDefinition > 0.01 ||
-            self.localContrast > 0.01 || self.flatSmoothing > 0.01 ||
+            self.localContrast > 0.01 || self.flatSmoothing > 0.01 || self.animeMode ||
             self.adaptiveVideoEnabled ||
             ![self.activeVideoPreset isEqualToString:@"none"]);
 }
@@ -137,12 +139,16 @@ static CIImage *VPEdgeMask(CIImage *image, double detailScale) {
     CIImage *luma = VPApply(image.imageByClampingToExtent, @"CIColorControls", @{kCIInputSaturationKey: @0});
     CIImage *soft = VPApply(luma, @"CIGaussianBlur", @{kCIInputRadiusKey: @(1.3 * detailScale)});
     CIImage *edges = VPApply(soft, @"CIEdges", @{kCIInputIntensityKey: @5.0});
-    // Soft threshold: gradients under about 0.16 count as flat, over about 0.41 as a full edge.
-    CIVector *gain = [CIVector vectorWithX:4 Y:0 Z:0 W:0];
+    // Soft threshold on the detector's output: under about 0.004 counts as flat, over about 0.05 as a full edge. These
+    // are measured, not nominal: on real footage CIEdges (at this intensity, in the linear working space) puts three
+    // quarters of a frame under 0.004, a strong line around 0.05 to 0.15, and its maximum near 0.27. A threshold in
+    // the tenths leaves the mask empty, and every effect that depends on it (sharpening, line definition, denoise,
+    // flat smoothing) then does nothing.
+    CIVector *gain = [CIVector vectorWithX:22 Y:0 Z:0 W:0];
     CIImage *mask = VPApply(edges, @"CIColorMatrix", @{
         @"inputRVector": gain, @"inputGVector": gain, @"inputBVector": gain,
         @"inputAVector": [CIVector vectorWithX:0 Y:0 Z:0 W:0],
-        @"inputBiasVector": [CIVector vectorWithX:-0.64 Y:-0.64 Z:-0.64 W:1]});
+        @"inputBiasVector": [CIVector vectorWithX:-0.09 Y:-0.09 Z:-0.09 W:1]});
     mask = VPApply(mask, @"CIColorClamp", @{@"inputMinComponents": [CIVector vectorWithX:0 Y:0 Z:0 W:1],
                                            @"inputMaxComponents": [CIVector vectorWithX:1 Y:1 Z:1 W:1]});
     // Widen it a little so the whole neighbourhood of a line is covered and the blend has no visible seam.
@@ -217,16 +223,18 @@ static CIImage *VPInvertMask(CIImage *mask) {
                                               @"inputBiasVector": [CIVector vectorWithX:1 Y:1 Z:1 W:0]});
 }
 
-- (NSData *)gradeCubeData {
-    NSString *key = [NSString stringWithFormat:@"%.3f|%.3f|%@", self.colorPop, self.contrastCurve, [self.hueGains componentsJoinedByString:@","]];
+- (NSData *)gradeCubeDataForPop:(double)pop curve:(double)curve {
+    NSString *key = [NSString stringWithFormat:@"%.3f|%.3f|%@", pop, curve, [self.hueGains componentsJoinedByString:@","]];
     @synchronized (self) {
         if ([_gradeCubeKey isEqualToString:key] && _gradeCubeData) return _gradeCubeData;
     }
     // 48 points per axis: a 1.7 MB table (cheap for the GPU) fine enough that the curve and hue shaping stay smooth.
-    NSData *cube = VPBuildGradeCube(self.colorPop, self.contrastCurve, self.hueGains, 48);
+    NSData *cube = VPBuildGradeCube(pop, curve, self.hueGains, 48);
     @synchronized (self) { _gradeCubeKey = key; _gradeCubeData = cube; }
     return cube;
 }
+
+static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect extent);
 
 - (CIImage *)processImage:(CIImage *)input {
     if (!input || !self.videoAIEnabled || !self.isVideoAIActive) {
@@ -235,7 +243,15 @@ static CIImage *VPInvertMask(CIImage *mask) {
     
     CGRect extent = input.extent;
     if (CGRectIsEmpty(extent) || CGRectIsInfinite(extent)) return input;
-    
+    if (self.comparisonMode == 1) return input;
+
+    // Anime mode raises these to at least its own level; a slider the user set higher stays where it is.
+    double anime = self.animeMode ? MAX(0.0, MIN(1.0, self.animeStrength)) : 0.0;
+    double denoiseAmount = MAX(self.adaptiveDenoise, 0.30 * anime), flatAmount = MAX(self.flatSmoothing, 0.65 * anime);
+    double clarityAmount = MAX(self.clarityBoost, 0.45 * anime), sharpAmount = MAX(self.luminanceSharpness, 0.55 * anime);
+    double lineAmount = MAX(self.lineDefinition, 0.80 * anime), vibranceAmount = MAX(self.vividVibrance, 0.60 * anime);
+    double popAmount = MAX(self.colorPop, 0.70 * anime), curveAmount = MAX(self.contrastCurve, 0.35 * anime);
+
     CIImage *output = input;
     
     // 1. Upscale first. Everything after this runs at the final size, so lines are sharpened at their real width
@@ -253,20 +269,30 @@ static CIImage *VPInvertMask(CIImage *mask) {
     // 2. Denoise flat areas only. Lines and edges keep their original pixels, so cleaning a noisy picture never
     //    smears the detail the viewer is looking at. (Strength is deliberately modest: heavy noise reduction
     //    gives faces a waxy look.)
-    if (self.adaptiveDenoise > 0.01) {
-        float noise = (float)(MIN(1.0, self.adaptiveDenoise) * 0.02);
+    if (denoiseAmount > 0.01) {
+        float noise = (float)(MIN(1.0, denoiseAmount) * 0.05);
         CIImage *cleaned = VPApply(output, @"CINoiseReduction", @{@"inputNoiseLevel": @(noise), @"inputSharpness": @(0.4)});
         output = VPBlend(output, cleaned, VPEdgeMask(output, detailScale));
     }
     
     // 2b. Flat colour areas (cels, skies, walls) are evened out with a median filter where there is no line, which
     //     removes banding speckle and compression noise and leaves the colour fields clean for the colour stage.
-    if (self.flatSmoothing > 0.01) {
+    if (flatAmount > 0.01) {
         CIImage *median = VPApply(output.imageByClampingToExtent, @"CIMedianFilter", @{});
-        CIImage *flat = VPScaleMask(VPInvertMask(VPEdgeMask(output, detailScale)), MIN(1.0, self.flatSmoothing));
+        CIImage *flat = VPScaleMask(VPInvertMask(VPEdgeMask(output, detailScale)), MIN(1.0, flatAmount));
         output = VPBlend([median imageByCroppingToRect:extent], output, flat);
     }
     
+    // 2c. Anime: colour fringing. Analogue and DVD-era sources smear colour past the ink lines (rainbow edges, red and
+    //     blue halos). Keeping each pixel's brightness but taking its colour from a softened copy removes the fringe
+    //     without softening a single line, because the lines live in the brightness.
+    if (anime > 0.01) {
+        CIImage *softColour = [VPApply(output.imageByClampingToExtent, @"CIGaussianBlur", @{kCIInputRadiusKey: @(1.8 * detailScale)}) imageByCroppingToRect:extent];
+        CIImage *fringeFree = VPApply(output, @"CILuminosityBlendMode", @{kCIInputBackgroundImageKey: softColour});
+        CIImage *everywhere = [[CIImage imageWithColor:[CIColor colorWithRed:1 green:1 blue:1]] imageByCroppingToRect:extent];
+        output = VPBlend([fringeFree imageByCroppingToRect:extent], output, VPScaleMask(everywhere, MIN(1.0, 0.9 * anime)));
+    }
+
     // 3. Tone. Highlight and shadow recovery are mild: shadows are opened, not flattened.
     if (self.hdrDynamicTone) {
         output = VPApply(output, @"CIHighlightShadowAdjust", @{@"inputHighlightAmount": @(0.92), @"inputShadowAmount": @(0.2)});
@@ -307,9 +333,9 @@ static CIImage *VPInvertMask(CIImage *mask) {
     }
     
     // 4b. The file's own grade: S-curve contrast, colour pop and per-hue saturation from one look-up table.
-    if (self.colorPop > 0.01 || self.contrastCurve > 0.01) {
+    if (popAmount > 0.01 || curveAmount > 0.01) {
         CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        CIImage *graded = VPApply(output, @"CIColorCubeWithColorSpace", @{@"inputCubeDimension": @48, @"inputCubeData": [self gradeCubeData],
+        CIImage *graded = VPApply(output, @"CIColorCubeWithColorSpace", @{@"inputCubeDimension": @48, @"inputCubeData": [self gradeCubeDataForPop:popAmount curve:curveAmount],
                                                                        @"inputColorSpace": (__bridge id)srgb});
         CGColorSpaceRelease(srgb);
         output = [graded imageByCroppingToRect:extent];
@@ -321,38 +347,68 @@ static CIImage *VPInvertMask(CIImage *mask) {
     }
     // 4d. Line definition: darker neighbours spread a little into line pixels, so outlines and ink lines come out
     //     firmer and cleaner. Only the edge mask is touched; faces, skies and textures keep their own pixels.
-    if (self.lineDefinition > 0.01) {
-        double window = MAX(1.0, round(detailScale));
+    if (lineAmount > 0.01) {
+        double window = MAX(1.5, 1.6 * detailScale);
         CIImage *thick = VPApply(output.imageByClampingToExtent, @"CIMorphologyMinimum", @{kCIInputRadiusKey: @(window)});
-        CIImage *mask = VPScaleMask(VPEdgeMask(output, detailScale), MIN(1.0, self.lineDefinition) * 0.85);
+        CIImage *mask = VPScaleMask(VPEdgeMask(output, detailScale), MIN(1.0, lineAmount) * 0.95);
         output = VPBlend([thick imageByCroppingToRect:extent], output, mask);
     }
     
+    // 4e. Anime: ink lines. Scaling and compression turn the dark outline of a cel into grey; this deepens the line
+    //     tone (only where the edge mask says there is a line) and thins it a touch so it reads as drawn ink again.
+    if (anime > 0.01) {
+        CIImage *deeper = VPApply(output, @"CIGammaAdjust", @{@"inputPower": @(1.0 + 0.9 * anime)});
+        CIImage *thinned = VPApply(deeper.imageByClampingToExtent, @"CIMorphologyMinimum", @{kCIInputRadiusKey: @(MAX(0.8, 0.9 * detailScale))});
+        CIImage *lineMask = VPScaleMask(VPEdgeMask(output, detailScale), MIN(1.0, 0.85 * anime));
+        output = VPBlend([thinned imageByCroppingToRect:extent], output, lineMask);
+    }
+
     // 5. Colour: Apple's vibrance lifts muted colours most and leaves saturated ones and skin tones alone, so the
     //    picture becomes vivid without turning orange or neon.
-    if (self.vividVibrance > 0.01) {
-        output = VPApply(output, @"CIVibrance", @{@"inputAmount": @(MIN(1.0, self.vividVibrance) * 0.65)});
+    if (vibranceAmount > 0.01) {
+        output = VPApply(output, @"CIVibrance", @{@"inputAmount": @(MIN(1.0, vibranceAmount) * 0.65)});
     }
     
     // 6. Sharpen last, and only along lines. Luma-only sharpening keeps colour noise out; the result is then held
     //    to the range of its own neighbourhood (no pixel may overshoot the brightest or darkest pixel next to it),
     //    which removes halos; and the edge mask confines the effect to real lines, leaving skin, sky and grain alone.
-    double lumaAmount = MIN(1.0, self.luminanceSharpness), detailAmount = MIN(1.0, self.clarityBoost);
+    double lumaAmount = MIN(1.0, sharpAmount), detailAmount = MIN(1.0, clarityAmount);
     if (lumaAmount > 0.01 || detailAmount > 0.01) {
         CIImage *sharpened = output;
-        if (lumaAmount > 0.01) sharpened = VPApply(sharpened, @"CISharpenLuminance", @{kCIInputSharpnessKey: @(lumaAmount * 0.8)});
-        if (detailAmount > 0.01) sharpened = VPApply(sharpened, @"CIUnsharpMask", @{kCIInputRadiusKey: @(1.1 * detailScale), kCIInputIntensityKey: @(detailAmount * 0.6)});
+        if (lumaAmount > 0.01) sharpened = VPApply(sharpened, @"CISharpenLuminance", @{kCIInputSharpnessKey: @(lumaAmount * 1.8), kCIInputRadiusKey: @(1.6 * detailScale)});
+        if (detailAmount > 0.01) sharpened = VPApply(sharpened, @"CIUnsharpMask", @{kCIInputRadiusKey: @(2.2 * detailScale), kCIInputIntensityKey: @(detailAmount * 1.4)});
         CIImage *surround = output.imageByClampingToExtent;
-        double window = MAX(1.0, round(detailScale));
-        CIImage *localMax = VPApply(surround, @"CIMorphologyMaximum", @{kCIInputRadiusKey: @(window)});
-        CIImage *localMin = VPApply(surround, @"CIMorphologyMinimum", @{kCIInputRadiusKey: @(window)});
+        // The overshoot limit is the range of the pixel's neighbourhood plus a small allowance that grows with the
+        // amount. With no allowance (and a one-pixel neighbourhood) the limit cancels nearly all of the sharpening.
+        double window = MAX(2.0, round(2.0 * detailScale));
+        double allowance = 0.03 + 0.07 * MAX(lumaAmount, detailAmount);
+        CIImage *localMax = VPApply(VPApply(surround, @"CIMorphologyMaximum", @{kCIInputRadiusKey: @(window)}), @"CIColorMatrix", @{@"inputBiasVector": [CIVector vectorWithX:allowance Y:allowance Z:allowance W:0]});
+        CIImage *localMin = VPApply(VPApply(surround, @"CIMorphologyMinimum", @{kCIInputRadiusKey: @(window)}), @"CIColorMatrix", @{@"inputBiasVector": [CIVector vectorWithX:-allowance Y:-allowance Z:-allowance W:0]});
         CIImage *limited = VPApply(sharpened.imageByClampingToExtent, @"CIMinimumCompositing", @{kCIInputBackgroundImageKey: localMax});
         limited = VPApply(limited, @"CIMaximumCompositing", @{kCIInputBackgroundImageKey: localMin});
         limited = [limited imageByCroppingToRect:extent];
         output = VPBlend(limited, output, VPEdgeMask(output, detailScale));
     }
-    
-    return [output imageByCroppingToRect:extent];
+
+    output = [output imageByCroppingToRect:extent];
+    if (self.comparisonMode == 2) output = VPSplitComparison(input, output, extent);
+    return output;
+}
+
+/// Original on the left half, enhanced on the right, with a thin divider. The original is stretched to the enhanced
+/// size when upscaling changed it, so both halves line up.
+static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect extent) {
+    CGRect source = original.extent;
+    CGAffineTransform fit = CGAffineTransformConcat(CGAffineTransformMakeTranslation(-source.origin.x, -source.origin.y),
+        CGAffineTransformMakeScale(extent.size.width / source.size.width, extent.size.height / source.size.height));
+    fit = CGAffineTransformConcat(fit, CGAffineTransformMakeTranslation(extent.origin.x, extent.origin.y));
+    CIImage *before = [[original imageByApplyingTransform:fit] imageByCroppingToRect:extent];
+    CGFloat middle = extent.origin.x + floor(extent.size.width / 2.0);
+    CIImage *right = [enhanced imageByCroppingToRect:CGRectMake(middle, extent.origin.y, extent.size.width - (middle - extent.origin.x), extent.size.height)];
+    CIImage *joined = [right imageByCompositingOverImage:before];
+    CGFloat lineWidth = MAX(2.0, round(extent.size.height / 540.0));
+    CIImage *line = [[CIImage imageWithColor:[CIColor colorWithRed:1 green:1 blue:1 alpha:0.9]] imageByCroppingToRect:CGRectMake(middle - lineWidth / 2.0, extent.origin.y, lineWidth, extent.size.height)];
+    return [[line imageByCompositingOverImage:joined] imageByCroppingToRect:extent];
 }
 
 #pragma mark - Audio Filter Graph Generation
@@ -738,6 +794,8 @@ static CIImage *VPInvertMask(CIImage *mask) {
 
 - (void)resetVideoAI {
     _videoAIEnabled = NO;
+    _animeMode = NO;
+    _comparisonMode = 0;
     _activeVideoPreset = @"none";
     _adaptiveVideoEnabled = NO;
     [self resetVideoParameters];

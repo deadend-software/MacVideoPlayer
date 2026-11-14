@@ -100,6 +100,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)showMediaInfo:(nullable id)sender;
 - (IBAction)showAirPlay:(nullable id)sender;
 - (IBAction)showPostProcessing:(nullable id)sender;
+- (IBAction)showAIVideo:(nullable id)sender;
+- (IBAction)toggleAnimeMode:(nullable NSMenuItem *)sender;
 - (IBAction)showShaderEditor:(nullable id)sender;
 - (IBAction)takeSnapshot:(nullable id)sender;
 - (IBAction)toggleControlsOverlay:(nullable id)sender;

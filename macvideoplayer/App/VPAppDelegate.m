@@ -235,6 +235,7 @@
     [self addItem:@"Deinterlace" action:@selector(toggleDeinterlace:) key:@"" modifiers:0 to:video];
     [self addItem:@"Reverse Telecine (IVTC)" action:@selector(toggleInverseTelecine:) key:@"" modifiers:0 to:video];
     [video addItem:NSMenuItem.separatorItem];
+    [self addItem:@"AI Video Enhancement…" action:@selector(showAIVideo:) key:@"a" modifiers:cmd | opt to:video];
     [self addItem:@"Post-Processing…" action:@selector(showPostProcessing:) key:@"p" modifiers:cmd | opt to:video];
     [self addItem:@"Shader & Filter Editor…" action:@selector(showShaderEditor:) key:@"e" modifiers:cmd | opt to:video];
     [video addItem:NSMenuItem.separatorItem];

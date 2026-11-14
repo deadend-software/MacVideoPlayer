@@ -41,6 +41,10 @@ typedef NS_ENUM(NSInteger, VPAspectRatio) {
 /// Seconds to add to the player's clock (media converted starting part-way through).
 @property (nonatomic) double displayOffset;
 @property (nonatomic) VPAspectRatio aspectRatio;
+/// Font family used for text subtitles (nil is the system font). Picture-based subtitles are images and keep their own look.
+@property (nonatomic, copy, nullable) NSString *subtitleFontName;
+/// The font text subtitles are drawn in at this size.
+- (NSFont *)subtitleFontOfSize:(CGFloat)size;
 /// Duration of the whole media when the player cannot report one (streamed conversions).
 @property (nonatomic) double knownDuration;
 /// Replaces the macvideoplayer logo shown on the empty stage (nil restores the built-in artwork).

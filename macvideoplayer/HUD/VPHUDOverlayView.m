@@ -104,6 +104,7 @@ static const CGFloat kRowHeight = 32, kGap = 8, kMargin = 16;
     [self addButton:@"Snapshot" symbol:@"camera" action:@selector(takeSnapshot:) tip:@"Save the current frame as a picture (C)" toggle:nil];
     [self addButton:@"Visualizer" symbol:@"waveform" action:@selector(toggleVisualizer:) tip:@"Show the audio visualizer over video (V)" toggle:@"visualizer"];
     [self addButton:@"FPS Display" symbol:@"speedometer" action:@selector(toggleFPS:) tip:@"Show frames per second (D)" toggle:@"fps"];
+    [self addButton:@"AI Video" symbol:@"camera.filters" action:@selector(showAIVideo:) tip:@"AI video enhancement: looks, upscaling, fine adjustments and a before/after view" toggle:nil];
     [self addButton:@"Post-Processing" symbol:@"slider.horizontal.3" action:@selector(showPostProcessing:) tip:@"Brightness, contrast, color, sharpness and more" toggle:nil];
     [self addButton:@"Shader Editor" symbol:@"wand.and.stars" action:@selector(showShaderEditor:) tip:@"Write shaders and chain filters with a live preview" toggle:nil];
     [self addButton:@"Audio Filters" symbol:@"waveform.path.ecg" action:@selector(showAudioFilters:) tip:@"Build, demo and apply a chain of audio filters" toggle:nil];

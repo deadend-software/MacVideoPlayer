@@ -82,10 +82,16 @@ static NSString *StripMarkup(NSString *text) {
     if (!text.length) return @"";
     NSMutableString *result = [text mutableCopy];
 
-    // Remove ASS drawing commands: {\p1} ... {\p0}
-    NSRegularExpression *drawingRegex = [NSRegularExpression regularExpressionWithPattern:@"\\{\\\\p[1-9]\\}.*?\\{\\\\p0\\}" options:NSRegularExpressionDotMatchesLineSeparators error:nil];
+    // Remove ASS vector drawings: an override block that switches drawing mode on ({\p1}, {\pos(0,0)\p1}...) and
+    // the path commands that follow it, up to the next block. \pos and \pbo are not matched (no digit after \p).
+    NSRegularExpression *drawingRegex = [NSRegularExpression regularExpressionWithPattern:@"\\{[^}]*\\\\p[1-9][^}]*\\}[^{]*" options:0 error:nil];
     if (drawingRegex) {
         [drawingRegex replaceMatchesInString:result options:0 range:NSMakeRange(0, result.length) withTemplate:@""];
+    }
+    // A converter may have already dropped the tags and left the path commands as a line of text ("m 0 0 l 10 5 ...").
+    NSRegularExpression *pathLineRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\s*m\\s+-?\\d+(?:\\.\\d+)?\\s+-?\\d+(?:\\.\\d+)?(?:\\s+[mlbspc]|\\s+-?\\d+(?:\\.\\d+)?)*\\s*$" options:NSRegularExpressionAnchorsMatchLines error:nil];
+    if (pathLineRegex) {
+        [pathLineRegex replaceMatchesInString:result options:0 range:NSMakeRange(0, result.length) withTemplate:@""];
     }
 
     // Remove ASS override tags: {\...} (e.g. {\pos}, {\c&H...}, {\k20}, {\an8}, {\fs...}, {\r})

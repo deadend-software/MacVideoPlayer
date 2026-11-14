@@ -67,7 +67,7 @@
     }
     dict = normalized;
 
-    NSArray *strings = @[@"backgroundImage", @"audioDevice", @"effect", @"keymap", @"lastBrowsedDirectory", @"shader", @"vf", @"af", @"audioLayout", @"audioSampleRate", @"scaler", @"fieldOrder", @"input", @"skin", @"playbackBackend", @"visualizerStyle", @"repeat", @"subtitle", @"videoQualityPreset", @"qualityPreset", @"postProcessingLevel"];
+    NSArray *strings = @[@"backgroundImage", @"audioDevice", @"effect", @"keymap", @"lastBrowsedDirectory", @"shader", @"vf", @"af", @"audioLayout", @"audioSampleRate", @"scaler", @"fieldOrder", @"input", @"skin", @"playbackBackend", @"visualizerStyle", @"repeat", @"subtitle", @"videoQualityPreset", @"qualityPreset", @"postProcessingLevel", @"subtitleFont"];
     BOOL valid = YES;
     for (NSString *key in strings) if (dict[key] && ![dict[key] isKindOfClass:NSString.class] && !(dict[key] == (id)kCFBooleanFalse || dict[key] == (id)kCFBooleanTrue)) {
         if ([key isEqualToString:@"postProcessingLevel"] && [dict[key] isKindOfClass:NSNumber.class]) continue;
