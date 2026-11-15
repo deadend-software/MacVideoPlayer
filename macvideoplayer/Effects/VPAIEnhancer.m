@@ -270,8 +270,8 @@ static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect e
     //    smears the detail the viewer is looking at. (Strength is deliberately modest: heavy noise reduction
     //    gives faces a waxy look.)
     if (denoiseAmount > 0.01) {
-        float noise = (float)(MIN(1.0, denoiseAmount) * 0.05);
-        CIImage *cleaned = VPApply(output, @"CINoiseReduction", @{@"inputNoiseLevel": @(noise), @"inputSharpness": @(0.4)});
+        float noise = (float)(MIN(1.0, denoiseAmount) * 0.07);
+        CIImage *cleaned = VPApply(output, @"CINoiseReduction", @{@"inputNoiseLevel": @(noise), @"inputSharpness": @(0.5)});
         output = VPBlend(output, cleaned, VPEdgeMask(output, detailScale));
     }
     
@@ -348,9 +348,11 @@ static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect e
     // 4d. Line definition: darker neighbours spread a little into line pixels, so outlines and ink lines come out
     //     firmer and cleaner. Only the edge mask is touched; faces, skies and textures keep their own pixels.
     if (lineAmount > 0.01) {
-        double window = MAX(1.5, 1.6 * detailScale);
+        double window = MAX(1.0, 1.0 * detailScale);
         CIImage *thick = VPApply(output.imageByClampingToExtent, @"CIMorphologyMinimum", @{kCIInputRadiusKey: @(window)});
-        CIImage *mask = VPScaleMask(VPEdgeMask(output, detailScale), MIN(1.0, lineAmount) * 0.95);
+        // Morphology works on square windows; a slight blur rounds the corners so lines do not look blocky.
+        thick = VPApply(thick, @"CIGaussianBlur", @{kCIInputRadiusKey: @(0.6 * detailScale)});
+        CIImage *mask = VPScaleMask(VPEdgeMask(output, detailScale), MIN(1.0, lineAmount) * 0.7);
         output = VPBlend([thick imageByCroppingToRect:extent], output, mask);
     }
     
@@ -375,8 +377,8 @@ static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect e
     double lumaAmount = MIN(1.0, sharpAmount), detailAmount = MIN(1.0, clarityAmount);
     if (lumaAmount > 0.01 || detailAmount > 0.01) {
         CIImage *sharpened = output;
-        if (lumaAmount > 0.01) sharpened = VPApply(sharpened, @"CISharpenLuminance", @{kCIInputSharpnessKey: @(lumaAmount * 1.8), kCIInputRadiusKey: @(1.6 * detailScale)});
-        if (detailAmount > 0.01) sharpened = VPApply(sharpened, @"CIUnsharpMask", @{kCIInputRadiusKey: @(2.2 * detailScale), kCIInputIntensityKey: @(detailAmount * 1.4)});
+        if (lumaAmount > 0.01) sharpened = VPApply(sharpened, @"CISharpenLuminance", @{kCIInputSharpnessKey: @(lumaAmount * 1.1), kCIInputRadiusKey: @(1.4 * detailScale)});
+        if (detailAmount > 0.01) sharpened = VPApply(sharpened, @"CIUnsharpMask", @{kCIInputRadiusKey: @(2.6 * detailScale), kCIInputIntensityKey: @(detailAmount * 0.85)});
         CIImage *surround = output.imageByClampingToExtent;
         // The overshoot limit is the range of the pixel's neighbourhood plus a small allowance that grows with the
         // amount. With no allowance (and a one-pixel neighbourhood) the limit cancels nearly all of the sharpening.
@@ -582,15 +584,15 @@ static CIImage *VPSplitComparison(CIImage *original, CIImage *enhanced, CGRect e
     
     if ([presetName isEqualToString:@"vivid_crisp"]) {
         _upscaleFactor = 1.0;
-        _clarityBoost = 0.65;
-        _luminanceSharpness = 0.70;
-        _adaptiveDenoise = 0.20;
-        _microContrast = 0.55;
+        _clarityBoost = 0.40;
+        _luminanceSharpness = 0.45;
+        _adaptiveDenoise = 0.50;
+        _microContrast = 0.40;
         _vividVibrance = 0.80;
         _hdrDynamicTone = YES;
         _cinemaColorGrade = NO;
         _visionSaliencyFocus = YES;
-        _colorPop = 0.80; _contrastCurve = 0.50; _lineDefinition = 0.50; _localContrast = 0.60; _flatSmoothing = 0.0;
+        _colorPop = 0.80; _contrastCurve = 0.50; _lineDefinition = 0.15; _localContrast = 0.40; _flatSmoothing = 0.30;
     } else if ([presetName isEqualToString:@"cinema_hdr"]) {
         _upscaleFactor = 1.0;
         _clarityBoost = 0.45;

@@ -134,13 +134,14 @@ static NSDictionary<NSString *, NSArray *> *EffectTable(void) {
     BOOL hasStages = [options[@"nativeStages"] count] || ([options[@"effect"] length] && ![options[@"effect"] isEqual:@"none"]) || [options[@"shader"] length];
     if (!hasStages && scale <= 1.01 && !VPPostProcessing.shared.isActive && !VPAIEnhancer.shared.isVideoAIActive) { item.videoComposition = nil; return YES; }
     CIContext *context = nil;
-    if (scale > 1.01) {
+    if (scale > 1.01 || VPAIEnhancer.shared.isVideoAIActive) {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) {
             if (error) *error = [NSError errorWithDomain:@"macvideoplayerErrorDomain" code:23 userInfo:@{NSLocalizedDescriptionKey:@"Metal is unavailable. Select scaler=lanczos for FFplay CPU scaling."}];
             return NO;
         }
-        context = [CIContext contextWithMTLDevice:device options:@{kCIContextCacheIntermediates:@NO}];
+        // Half-float working format: the stacked filters keep full precision, so gradients stay smooth instead of banding.
+        context = [CIContext contextWithMTLDevice:device options:@{kCIContextCacheIntermediates:@NO, kCIContextWorkingFormat:@(kCIFormatRGBAh)}];
     }
     if (![item.asset tracksWithMediaType:AVMediaTypeVideo].count) {
         // Audio-only media simply has no picture to process.
